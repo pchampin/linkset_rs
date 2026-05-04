@@ -12,6 +12,15 @@ pub enum LinksetError {
     /// A link set can not contain two contexts with the same anchor
     #[error("duplicate link: <{2}>; rel=\"{1}\"; anchor=\"{0}\"")]
     DuplicateLink(Uri<String>, RelType, Uri<String>),
+    /// A JSON document is structurally invalid or contains an invalid value.
+    #[error("JSON: {0}")]
+    Json(String),
+}
+
+impl From<serde_json::Error> for LinksetError {
+    fn from(value: serde_json::Error) -> Self {
+        LinksetError::Json(format!("{value}"))
+    }
 }
 
 /// Error returned when a string is not a plausible media type.
