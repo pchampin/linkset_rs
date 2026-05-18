@@ -9,8 +9,15 @@ pub mod text;
 
 pub use model::Linkset;
 
+// ── Interop tests (step 5) ────────────────────────────────────────────────────
+
 #[cfg(test)]
 pub(crate) mod tests {
+    use sophia_iri::uri::Uri;
+    use test_case::test_case;
+
+    use crate::Linkset;
+
     /// Get a specific example from SPEC_EXAMPLES by its name.
     ///
     /// Will panic if the name is not found in SPEC_EXAMPLES.
@@ -40,9 +47,9 @@ pub(crate) mod tests {
 }
     "#,
             r#"
-<https://example.net/foo>
+<https://example.com/foo>
    ; rel="next"
-   ; anchor="https://example.org/bar"
+   ; anchor="https://example.net/bar"
     "#,
         ],
         [
@@ -60,12 +67,12 @@ pub(crate) mod tests {
 }
     "#,
             r#"
-<https://example.net/foo1>
-   ; rel="next"
-   ; anchor="https://example.org/bar",
-<https://example.net/foo2>
-   ; rel="next"
-   ; anchor="https://example.org/bar"
+<https://example.com/foo1>
+   ; rel="item"
+   ; anchor="https://example.net/bar",
+<https://example.com/foo2>
+   ; rel="item"
+   ; anchor="https://example.net/bar"
     "#,
         ],
         [
@@ -87,12 +94,12 @@ pub(crate) mod tests {
 }
     "#,
             r#"
-<https://example.net/foo1>
+<https://example.com/foo1>
    ; rel="next"
-   ; anchor="https://example.org/bar",
-<https://example.net/foo2>
+   ; anchor="https://example.net/bar",
+<https://example.com/foo2>
    ; rel="https://example.com/relations/baz"
-   ; anchor="https://example.org/boo"
+   ; anchor="https://example.net/boo"
     "#,
         ],
         [
@@ -112,9 +119,9 @@ pub(crate) mod tests {
 }
     "#,
             r#"
-<https://example.net/foo>
+<https://example.com/foo>
    ; rel="next"
-   ; anchor="https://example.org/bar"
+   ; anchor="https://example.net/bar"
    ; type="text/html"
    ; hreflang=en
    ; hreflang=de
@@ -140,9 +147,9 @@ pub(crate) mod tests {
 }
     "#,
             r#"
-<https://example.net/foo>
+<https://example.com/foo>
    ; rel="next"
-   ; anchor="https://example.org/bar"
+   ; anchor="https://example.net/bar"
    ; type="text/html"
    ; hreflang=en
    ; hreflang=de
@@ -170,9 +177,9 @@ pub(crate) mod tests {
 }
     "#,
             r#"
-<https://example.net/foo>
+<https://example.com/foo>
    ; rel="next"
-   ; anchor="https://example.org/bar"
+   ; anchor="https://example.net/bar"
    ; type="text/html"
    ; foo="foovalue"
    ; bar="barone"
@@ -424,4 +431,66 @@ pub(crate) mod tests {
     "#,
         ],
     ];
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn json_and_text_parse_equal(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [json, text] = crate::tests::spec_example(example);
+        let ls_json = Linkset::from_json_str(json, base).unwrap();
+        let ls_text = Linkset::from_text_str(text, base).unwrap();
+        assert_eq!(ls_json, ls_text);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn json_to_text_and_back(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [json, _] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_json_str(json, base).unwrap();
+        let text = ls1.to_text_string(false);
+        let ls2 = Linkset::from_text_str(&text, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn text_to_json_and_back(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let json_str = ls1.to_json_string(false);
+        let ls2 = Linkset::from_json_str(&json_str, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
 }
