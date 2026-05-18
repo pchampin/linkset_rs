@@ -27,6 +27,7 @@ use crate::{
     Linkset,
     error::LinksetError,
     model::{I18nString, Link, LinkContext, MediaType, RelType, ext_token},
+    text::relativize,
 };
 
 impl Linkset {
@@ -82,8 +83,10 @@ impl Linkset {
 
     /// Create a JSON value from [`Linkset`], complying with `application/linkset+json`
     /// as defined by [RFC 9264 Sec. 4.2](https://www.rfc-editor.org/rfc/rfc9264.html#name-json-document-format-applic).
-    pub fn to_json_value(&self) -> Value {
-        let contexts: Vec<Value> = self.iter().map(context_to_value).collect();
+    ///
+    /// If `base` is not None, anchors and targets are relativized against it.
+    pub fn to_json_value(&self, base: Option<Uri<&str>>) -> Value {
+        let contexts: Vec<Value> = self.iter().map(|c| context_to_value(c, base)).collect();
         let mut map = serde_json::Map::new();
         map.insert("linkset".into(), Value::Array(contexts));
         Value::Object(map)
@@ -91,21 +94,25 @@ impl Linkset {
 
     /// Create a JSON string from [`Linkset`], complying with `application/linkset+json`
     /// as defined by [RFC 9264 Sec. 4.2](https://www.rfc-editor.org/rfc/rfc9264.html#name-json-document-format-applic).
-    pub fn to_json_string(&self, pretty: bool) -> String {
+    ///
+    /// If `base` is not None, anchors and targets are relativized against it.
+    pub fn to_json_string(&self, pretty: bool, base: Option<Uri<&str>>) -> String {
         if pretty {
-            format!("{}", self.to_json_value())
+            format!("{}", self.to_json_value(base))
         } else {
-            format!("{:#}", self.to_json_value())
+            format!("{:#}", self.to_json_value(base))
         }
     }
 
     /// Create JSON bytes from [`Linkset`], complying with `application/linkset+json`
     /// as defined by [RFC 9264 Sec. 4.2](https://www.rfc-editor.org/rfc/rfc9264.html#name-json-document-format-applic).
-    pub fn to_json_vec(&self, pretty: bool) -> Vec<u8> {
+    ///
+    /// If `base` is not None, anchors and targets are relativized against it.
+    pub fn to_json_vec(&self, pretty: bool, base: Option<Uri<&str>>) -> Vec<u8> {
         if pretty {
-            serde_json::to_vec_pretty(&self.to_json_value())
+            serde_json::to_vec_pretty(&self.to_json_value(base))
         } else {
-            serde_json::to_vec(&self.to_json_value())
+            serde_json::to_vec(&self.to_json_value(base))
         }
         .unwrap()
         // we are serializing a serde_json::Value to JSON,
@@ -114,11 +121,18 @@ impl Linkset {
 
     /// Write [`Linkset`] to a stream as JSON, complying with `application/linkset+json`
     /// as defined by [RFC 9264 Sec. 4.2](https://www.rfc-editor.org/rfc/rfc9264.html#name-json-document-format-applic).
-    pub fn to_json_writer(&self, writer: impl io::Write, pretty: bool) -> io::Result<()> {
+    ///
+    /// If `base` is not None, anchors and targets are relativized against it.
+    pub fn to_json_writer(
+        &self,
+        writer: impl io::Write,
+        pretty: bool,
+        base: Option<Uri<&str>>,
+    ) -> io::Result<()> {
         if pretty {
-            serde_json::to_writer_pretty(writer, &self.to_json_value())
+            serde_json::to_writer_pretty(writer, &self.to_json_value(base))
         } else {
-            serde_json::to_writer(writer, &self.to_json_value())
+            serde_json::to_writer(writer, &self.to_json_value(base))
         }
         .map_err(|err| {
             if let Some(io_err_kind) = err.io_error_kind() {
@@ -366,16 +380,17 @@ fn parse_i18n_value(value: &Value) -> Result<I18nString, &'static str> {
 
 // ---------------- Serialization ----------------
 
-fn context_to_value(ctx: &LinkContext) -> Value {
+fn context_to_value(ctx: &LinkContext, base: Option<Uri<&str>>) -> Value {
     let mut map = serde_json::Map::new();
-    map.insert(
-        "anchor".into(),
-        Value::String(ctx.anchor().as_str().to_string()),
-    );
+
+    let anchor = relativize(ctx.anchor().as_ref(), base);
+    if !anchor.is_empty() {
+        map.insert("anchor".into(), anchor.as_str().into());
+    }
 
     for link in ctx {
         let rel = link.rel().as_str().to_string();
-        let target_val = link_to_value(link);
+        let target_val = link_to_value(link, base);
         map.entry(rel)
             .or_insert_with(|| Value::Array(vec![]))
             .as_array_mut()
@@ -386,11 +401,11 @@ fn context_to_value(ctx: &LinkContext) -> Value {
     Value::Object(map)
 }
 
-fn link_to_value(link: &Link) -> Value {
+fn link_to_value(link: &Link, base: Option<Uri<&str>>) -> Value {
     let mut map = serde_json::Map::new();
     map.insert(
         "href".into(),
-        Value::String(link.target().as_str().to_string()),
+        Value::String(relativize(link.target().as_ref(), base).to_string()),
     );
 
     if let Some(type_) = &link.type_ {
@@ -498,7 +513,7 @@ mod tests {
         let link = &ls[0][0];
         assert_eq!(link.get_ext("foo").unwrap(), &["bar", "baz"]);
         assert_eq!(link.get_ext_i18n("label*").unwrap()[0].value, "Bonjour");
-        let ls2 = Linkset::from_json_value(ls.to_json_value(), None).unwrap();
+        let ls2 = Linkset::from_json_value(ls.to_json_value(None), None).unwrap();
         assert_eq!(ls, ls2);
     }
 
@@ -515,7 +530,7 @@ mod tests {
         });
         let ls = Linkset::from_json_value(val.clone(), None).unwrap();
         assert_eq!(ls[0].len(), 2);
-        let serialized = ls.to_json_value();
+        let serialized = ls.to_json_value(None);
         // Both items should be in the same array
         let items = serialized["linkset"][0]["item"].as_array().unwrap();
         assert_eq!(items.len(), 2);
@@ -531,6 +546,35 @@ mod tests {
         });
         let ls = Linkset::from_json_value(val, None).unwrap();
         assert_eq!(ls[0][0].rel(), "https://example.com/rel/owns");
+    }
+
+    #[test]
+    fn serialize_with_base() {
+        let input: Value = serde_json::from_str(
+            r#"
+            {
+                "linkset": [
+                    {
+                        "item": [
+                            { "href": "item1" },
+                            { "href": "item2" }
+                        ]
+                    },
+                    {
+                        "anchor": "item1",
+                        "next": [
+                            { "href": "item2" }
+                        ]
+                    }
+                ]
+            }
+        "#,
+        )
+        .unwrap();
+        let base = Some(Uri::new_unchecked("https://example.com/"));
+        let ls = Linkset::from_json_value(&input, base).unwrap();
+        let output = ls.to_json_value(base);
+        assert_eq!(input, output);
     }
 
     #[test_case(r#"
@@ -746,7 +790,28 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.com/"));
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
-        let value = ls1.to_json_value();
+        let value = ls1.to_json_value(None);
+        let ls2 = Linkset::from_json_value(value, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_value_with_base(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.com/"));
+        let [json, _] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_json_str(json, base).unwrap();
+        let value = ls1.to_json_value(base);
         let ls2 = Linkset::from_json_value(value, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -767,7 +832,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.com/"));
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
-        let string = ls1.to_json_string(false);
+        let string = ls1.to_json_string(false, None);
         let ls2 = Linkset::from_json_str(&string, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -788,7 +853,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.com/"));
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
-        let string = ls1.to_json_string(true);
+        let string = ls1.to_json_string(true, None);
         let ls2 = Linkset::from_json_str(&string, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -809,7 +874,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.com/"));
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
-        let vec = ls1.to_json_vec(false);
+        let vec = ls1.to_json_vec(false, None);
         let ls2 = Linkset::from_json_slice(&vec, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -830,7 +895,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.com/"));
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
-        let vec = ls1.to_json_vec(true);
+        let vec = ls1.to_json_vec(true, None);
         let ls2 = Linkset::from_json_slice(&vec, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -852,7 +917,7 @@ mod tests {
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
         let mut buffer = Cursor::new(vec![0_u8; 0]);
-        ls1.to_json_writer(&mut buffer, false).unwrap();
+        ls1.to_json_writer(&mut buffer, false, None).unwrap();
         let ls2 = Linkset::from_json_reader(&buffer.get_ref()[..], base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -874,7 +939,7 @@ mod tests {
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
         let mut buffer = Cursor::new(vec![0_u8; 0]);
-        ls1.to_json_writer(&mut buffer, true).unwrap();
+        ls1.to_json_writer(&mut buffer, true, None).unwrap();
         let ls2 = Linkset::from_json_reader(&buffer.get_ref()[..], base).unwrap();
         assert_eq!(ls1, ls2);
     }

@@ -31,16 +31,16 @@
 //! let home = Uri::new_unchecked("https://example.org/page1".to_string());
 //!
 //! let linkset: Linkset = LinkContext::new_with(
-//!   page1,
+//!   page1.clone(),
 //!   vec![
 //!     Link::new(page2, RelType::new_reg_unchecked("next")),
 //!     Link::new(home, RelType::new_reg_unchecked("up")),
 //!   ]
 //! )?.into();
 //!
-//! let json = linkset.to_json_string(true);
+//! let json = linkset.to_json_string(true, Some(page1.as_ref()));
 //!
-//! # assert_eq!(linkset, Linkset::from_json_str(&json, None).unwrap());
+//! # assert_eq!(linkset, Linkset::from_json_str(&json, Some(page1.as_ref())).unwrap());
 //! # Ok(()) } test();
 //! ```
 //!
@@ -511,7 +511,7 @@ pub(crate) mod tests {
         let base = Some(Uri::new_unchecked("https://example.org/resource1"));
         let [json, _] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_json_str(json, base).unwrap();
-        let text = ls1.to_text_string(false);
+        let text = ls1.to_text_string(false, None);
         let ls2 = Linkset::from_text_str(&text, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -532,7 +532,7 @@ pub(crate) mod tests {
         let base = Some(Uri::new_unchecked("https://example.org/resource1"));
         let [_, text] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_text_str(text, base).unwrap();
-        let json_str = ls1.to_json_string(false);
+        let json_str = ls1.to_json_string(false, None);
         let ls2 = Linkset::from_json_str(&json_str, base).unwrap();
         assert_eq!(ls1, ls2);
     }

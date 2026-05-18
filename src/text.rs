@@ -51,8 +51,15 @@ impl Linkset {
     ///
     /// With `pretty = false` the output is a single line suitable for use as an HTTP
     /// [`Link`](https://www.rfc-editor.org/rfc/rfc8288#section-3) header value.
-    /// With `pretty = true` each parameter is placed on its own indented line.
-    pub fn to_text_writer(&self, mut writer: impl io::Write, pretty: bool) -> io::Result<()> {
+    /// With `pretty = true`, newlines and indentations will be used.
+    ///
+    /// If `base` is not None, anchors and targets are relativized against it.
+    pub fn to_text_writer(
+        &self,
+        mut writer: impl io::Write,
+        pretty: bool,
+        base: Option<Uri<&str>>,
+    ) -> io::Result<()> {
         let mut first = true;
         for ctx in self {
             for link in ctx {
@@ -60,7 +67,8 @@ impl Linkset {
                     writer.write_all(if pretty { b",\n" } else { b", " })?;
                 }
                 first = false;
-                write_link_value(&mut writer, link, ctx.anchor(), pretty)?;
+                let anchor = relativize(ctx.anchor().as_ref(), base);
+                write_link_value(&mut writer, link, anchor, pretty, base)?;
             }
         }
         Ok(())
@@ -68,18 +76,30 @@ impl Linkset {
 
     /// Serialize this [`Linkset`] as `application/linkset` bytes
     /// as defined by [RFC 9264 §4.1](https://www.rfc-editor.org/rfc/rfc9264.html#name-link-set-document-format-ap).
-    pub fn to_text_vec(&self, pretty: bool) -> Vec<u8> {
+    ///
+    /// With `pretty = false` the output is a single line suitable for use as an HTTP
+    /// [`Link`](https://www.rfc-editor.org/rfc/rfc8288#section-3) header value.
+    /// With `pretty = true`, newlines and indentations will be used.
+    ///
+    /// If `base` is not None, anchors and targets are relativized against it.
+    pub fn to_text_vec(&self, pretty: bool, base: Option<Uri<&str>>) -> Vec<u8> {
         let mut buf = Vec::new();
-        self.to_text_writer(&mut buf, pretty)
+        self.to_text_writer(&mut buf, pretty, base)
             .expect("writing to Vec<u8> is infallible");
         buf
     }
 
     /// Serialize this [`Linkset`] as an `application/linkset` string
     /// as defined by [RFC 9264 §4.1](https://www.rfc-editor.org/rfc/rfc9264.html#name-link-set-document-format-ap).
-    pub fn to_text_string(&self, pretty: bool) -> String {
+    ///
+    /// With `pretty = false` the output is a single line suitable for use as an HTTP
+    /// [`Link`](https://www.rfc-editor.org/rfc/rfc8288#section-3) header value.
+    /// With `pretty = true`, newlines and indentations will be used.
+    ///
+    /// If `base` is not None, anchors and targets are relativized against it.
+    pub fn to_text_string(&self, pretty: bool, base: Option<Uri<&str>>) -> String {
         // Safe: to_text_writer only emits ASCII bytes.
-        unsafe { String::from_utf8_unchecked(self.to_text_vec(pretty)) }
+        unsafe { String::from_utf8_unchecked(self.to_text_vec(pretty, base)) }
     }
 }
 
@@ -445,20 +465,23 @@ fn entries_to_linkset(
 fn write_link_value(
     w: &mut impl io::Write,
     link: &Link,
-    anchor: &sophia_iri::uri::Uri<String>,
+    anchor: UriRef<&str>,
     pretty: bool,
+    base: Option<Uri<&str>>,
 ) -> io::Result<()> {
     let sep: &[u8] = if pretty { b"\n   ; " } else { b"; " };
 
-    write!(w, "<{}>", link.target().as_str())?;
+    write!(w, "<{}>", relativize(link.target().as_ref(), base))?;
 
     w.write_all(sep)?;
     w.write_all(b"rel=")?;
     write_quoted(w, link.rel().as_str())?;
 
-    w.write_all(sep)?;
-    w.write_all(b"anchor=")?;
-    write_quoted(w, anchor.as_str())?;
+    if !anchor.is_empty() {
+        w.write_all(sep)?;
+        w.write_all(b"anchor=")?;
+        write_quoted(w, anchor.as_str())?;
+    }
 
     if let Some(t) = &link.type_ {
         w.write_all(sep)?;
@@ -534,10 +557,50 @@ fn is_attr_char(b: u8) -> bool {
         )
 }
 
+pub(crate) fn relativize<'a>(uri: Uri<&'a str>, base: Option<Uri<&str>>) -> UriRef<&'a str> {
+    if let Some(base) = base {
+        let base = match base.find('#') {
+            None => base,
+            Some(f) => Uri::new_unchecked(&base[..f]),
+        };
+        let common_len = uri
+            .bytes()
+            .zip(base.bytes())
+            .take_while(|(b1, b2)| b1 == b2)
+            .count();
+        if common_len > 0 {
+            if common_len == base.len()
+                && (common_len == uri.len()
+                    || uri[common_len..].starts_with('?')
+                    || uri[common_len..].starts_with('#'))
+            {
+                return UriRef::new_unchecked(&uri[common_len..]);
+            }
+            if let Some(f) = uri[..common_len].find('#') {
+                return UriRef::new_unchecked(&uri[f..]);
+            }
+            if let Some(q) = uri[..common_len].find('?') {
+                return UriRef::new_unchecked(&uri[q..]);
+            }
+            if base[common_len..].find('/').is_none()
+                && let Some(p) = base[..common_len].rfind('/')
+            {
+                if uri.len() > p + 1 {
+                    return UriRef::new_unchecked(&uri[p + 1..]);
+                } else {
+                    return UriRef::new_unchecked(".");
+                }
+            }
+        }
+    }
+    UriRef::new_unchecked(uri.unwrap())
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
+    use sophia_iri::{Iri, IriRef};
     use test_case::test_case;
 
     use super::*;
@@ -574,6 +637,54 @@ mod tests {
             Linkset::from_text_str(input, None),
             Err(LinksetError::Text(_))
         ));
+    }
+
+    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=e#f", "#f")]
+    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=e#ff", "#ff")]
+    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=e", "")]
+    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=ee", "?d=ee")]
+    #[test_case("x://a/b/c?d=e#f", "x://a/b/c", "c")]
+    #[test_case("x://a/b/c?d=e#f", "x://a/b/cc", "cc")]
+    #[test_case("x://a/b/c?d=e#f", "x://a/b/", ".")]
+    #[test_case("x://a/b/c?d=e#f", "x://a/bb", "x://a/bb")]
+    #[test_case("x://a/b/c?d=e#f", "x:o", "x:o")]
+    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=e#f", "#f")]
+    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=e#ff", "#ff")]
+    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=e", "")]
+    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=ee", "?d=ee")]
+    #[test_case("x://a/b/c?d=e", "x://a/b/c", "c")]
+    #[test_case("x://a/b/c?d=e", "x://a/b/cc", "cc")]
+    #[test_case("x://a/b/c?d=e", "x://a/b/", ".")]
+    #[test_case("x://a/b/c?d=e", "x://a/bb", "x://a/bb")]
+    #[test_case("x://a/b/c?d=e", "x:o", "x:o")]
+    #[test_case("x://a/b/c", "x://a/b/c?d=e#f", "?d=e#f")]
+    #[test_case("x://a/b/c", "x://a/b/c?d=e#ff", "?d=e#ff")]
+    #[test_case("x://a/b/c", "x://a/b/c?d=e", "?d=e")]
+    #[test_case("x://a/b/c", "x://a/b/c?d=ee", "?d=ee")]
+    #[test_case("x://a/b/c", "x://a/b/c", "")]
+    #[test_case("x://a/b/c", "x://a/b/cc", "cc")]
+    #[test_case("x://a/b/c", "x://a/b/", ".")]
+    #[test_case("x://a/b/c", "x://a/bb", "x://a/bb")]
+    #[test_case("x://a/b/c", "x:o", "x:o")]
+    #[test_case("x://a/b/", "x://a/b/c?d=e#f", "c?d=e#f")]
+    #[test_case("x://a/b/", "x://a/b/c?d=e#ff", "c?d=e#ff")]
+    #[test_case("x://a/b/", "x://a/b/c?d=e", "c?d=e")]
+    #[test_case("x://a/b/", "x://a/b/c?d=ee", "c?d=ee")]
+    #[test_case("x://a/b/", "x://a/b/c", "c")]
+    #[test_case("x://a/b/", "x://a/b/cc", "cc")]
+    #[test_case("x://a/b/", "x://a/b/", "")]
+    #[test_case("x://a/b/", "x://a/bb", "x://a/bb")]
+    #[test_case("x://a/b/", "x:o", "x:o")]
+    fn relativize_(base: &str, uri: &str, exp: &str) {
+        let base = Uri::new_unchecked(dbg!(base));
+        let uri = Uri::new_unchecked(dbg!(uri));
+        let got = relativize(uri, Some(base));
+        assert_eq!(exp, got.as_str());
+        let base_iri = Iri::new_unchecked(base.unwrap());
+        let base = base_iri.as_base();
+        let check = base.resolve(IriRef::new_unchecked(got.unwrap()));
+        dbg!("checking resolution");
+        assert_eq!(uri.as_str(), check.as_str());
     }
 
     #[test]
@@ -654,6 +765,15 @@ mod tests {
         assert!(Linkset::from_text_str(input, None).is_err());
     }
 
+    #[test]
+    fn serialize_with_base() {
+        let base = Some(Uri::new_unchecked("https://x.com/"));
+        let input = r#"<foo>; rel="item""#;
+        let ls = Linkset::from_text_str(input, base).unwrap();
+        let output = ls.to_text_string(false, base);
+        assert_eq!(input, output);
+    }
+
     // Figures 12, 14, 17, 18 have no anchor param so they need a base URI.
     #[test_case("figure 1")]
     #[test_case("figure 2")]
@@ -689,7 +809,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.org/resource1"));
         let [_, text] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_text_str(text, base).unwrap();
-        let s = ls1.to_text_string(false);
+        let s = ls1.to_text_string(false, None);
         let ls2 = Linkset::from_text_str(&s, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -710,7 +830,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.org/resource1"));
         let [_, text] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_text_str(text, base).unwrap();
-        let s = ls1.to_text_string(true);
+        let s = ls1.to_text_string(true, None);
         let ls2 = Linkset::from_text_str(&s, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -731,7 +851,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.org/resource1"));
         let [_, text] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_text_str(text, base).unwrap();
-        let vec = ls1.to_text_vec(false);
+        let vec = ls1.to_text_vec(false, None);
         let ls2 = Linkset::from_text_slice(&vec, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -752,7 +872,7 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.org/resource1"));
         let [_, text] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_text_str(text, base).unwrap();
-        let vec = ls1.to_text_vec(true);
+        let vec = ls1.to_text_vec(true, None);
         let ls2 = Linkset::from_text_slice(&vec, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -774,7 +894,7 @@ mod tests {
         let [_, text] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_text_str(text, base).unwrap();
         let mut buf = Vec::new();
-        ls1.to_text_writer(&mut buf, false).unwrap();
+        ls1.to_text_writer(&mut buf, false, None).unwrap();
         let ls2 = Linkset::from_text_slice(&buf, base).unwrap();
         assert_eq!(ls1, ls2);
     }
@@ -796,7 +916,29 @@ mod tests {
         let [_, text] = crate::tests::spec_example(example);
         let ls1 = Linkset::from_text_str(text, base).unwrap();
         let mut buf = Vec::new();
-        ls1.to_text_writer(&mut buf, true).unwrap();
+        ls1.to_text_writer(&mut buf, true, None).unwrap();
+        let ls2 = Linkset::from_text_slice(&buf, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_io_with_base(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let mut buf = Vec::new();
+        ls1.to_text_writer(&mut buf, false, base).unwrap();
         let ls2 = Linkset::from_text_slice(&buf, base).unwrap();
         assert_eq!(ls1, ls2);
     }
