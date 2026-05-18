@@ -1,3 +1,18 @@
+//! I provide implementation for parsng and serializing [`Linkset`]s
+//! in the JSON format defined by [RFC 9264], `application/linkset+json`.
+//!
+//! See:
+//! * [`Linkset::from_json_reader`]
+//! * [`Linkset::from_json_slice`]
+//! * [`Linkset::from_json_str`]
+//! * [`Linkset::from_json_value`]
+//! * [`Linkset::to_json_string`]
+//! * [`Linkset::to_json_value`]
+//! * [`Linkset::to_json_vec`]
+//! * [`Linkset::to_json_writer`]
+//!
+//! [RFC 9264]: https://www.rfc-editor.org/rfc/rfc9264.html
+
 use std::borrow::Borrow;
 use std::io;
 

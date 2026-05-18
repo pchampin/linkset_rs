@@ -1,3 +1,5 @@
+//! I define the error type [`LinksetError`] for [`Linkset`](crate::Linkset) processing.
+
 use sophia_iri::uri::Uri;
 use thiserror::Error;
 

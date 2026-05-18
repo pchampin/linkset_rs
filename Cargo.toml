@@ -1,7 +1,11 @@
 [package]
-name = "linkset_rs"
+name = "linkset"
 version = "0.1.0"
 edition = "2024"
+license = "BSD 3-Clause"
+readme = "./README.md"
+repository = "https://github.com/pchampin/linkset_rs"
+authors = ["Pierre-Antoine Champin <pierre-antoine@champin.net>"]
 
 [lib]
 name = "linkset_rs"

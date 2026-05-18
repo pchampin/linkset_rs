@@ -1,3 +1,5 @@
+//! I define the types [`Linkset`], [`LinkContext`] and [`Link`].
+
 pub(crate) mod ext_token;
 mod link;
 mod link_context;

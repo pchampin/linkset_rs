@@ -1,3 +1,15 @@
+//! I provide implementation for parsng and serializing [`Linkset`]s
+//! in the text format defined by [RFC 9264], `application/linkset`.
+//!
+//! See:
+//! * [`Linkset::from_text_slice`]
+//! * [`Linkset::from_text_str`]
+//! * [`Linkset::to_text_string`]
+//! * [`Linkset::to_text_vec`]
+//! * [`Linkset::to_text_writer`]
+//!
+//! [RFC 9264]: https://www.rfc-editor.org/rfc/rfc9264.html
+
 use std::io;
 
 use sophia_bcp47::LanguageTag;
