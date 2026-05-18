@@ -36,6 +36,9 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://example.net/foo>
+   ; rel="next"
+   ; anchor="https://example.org/bar"
     "#,
         ],
         [
@@ -53,6 +56,12 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://example.net/foo1>
+   ; rel="next"
+   ; anchor="https://example.org/bar",
+<https://example.net/foo2>
+   ; rel="next"
+   ; anchor="https://example.org/bar"
     "#,
         ],
         [
@@ -74,6 +83,12 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://example.net/foo1>
+   ; rel="next"
+   ; anchor="https://example.org/bar",
+<https://example.net/foo2>
+   ; rel="https://example.com/relations/baz"
+   ; anchor="https://example.org/boo"
     "#,
         ],
         [
@@ -93,6 +108,12 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://example.net/foo>
+   ; rel="next"
+   ; anchor="https://example.org/bar"
+   ; type="text/html"
+   ; hreflang=en
+   ; hreflang=de
     "#,
         ],
         [
@@ -115,6 +136,14 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://example.net/foo>
+   ; rel="next"
+   ; anchor="https://example.org/bar"
+   ; type="text/html"
+   ; hreflang=en
+   ; hreflang=de
+   ; title="Next chapter"
+   ; title*=UTF-8'de'n%c3%a4chstes%20Kapitel
     "#,
         ],
         [
@@ -137,6 +166,14 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://example.net/foo>
+   ; rel="next"
+   ; anchor="https://example.org/bar"
+   ; type="text/html"
+   ; foo="foovalue"
+   ; bar="barone"
+   ; bar="bartwo"
+   ; baz*=US-ASCII'en'bazvalue
     "#,
         ],
         [
@@ -274,6 +311,35 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://authors.example.net/johndoe>
+   ; rel="author"
+   ; type="application/rdf+xml"
+   ; anchor="https://example.org/resource1",
+<https://example.org/resource1?version=1>
+   ; rel="memento"
+   ; type="text/html"
+   ; datetime="Thu, 13 Jun 2019 09:34:33 GMT"
+   ; anchor="https://example.org/resource1",
+<https://example.org/resource1?version=2>
+   ; rel="memento"
+   ; type="text/html"
+   ; datetime="Sun, 21 Jul 2019 12:22:04 GMT"
+   ; anchor="https://example.org/resource1",
+<https://example.org/resource1?version=3>
+   ; rel="latest-version"
+   ; type="text/html"
+   ; anchor="https://example.org/resource1",
+<https://example.org/resource1?version=2>
+   ; rel="predecessor-version"
+   ; type="text/html"
+   ; anchor="https://example.org/resource1?version=3",
+<https://example.org/resource1?version=1>
+   ; rel="predecessor-version"
+   ; type="text/html"
+   ; anchor="https://example.org/resource1?version=2",
+<https://authors.example.net/alice>
+   ; rel="author"
+   ; anchor="https://example.org/resource1#comment=1"
     "#,
         ],
         [
@@ -345,6 +411,12 @@ pub(crate) mod tests {
 }
     "#,
             r#"
+<https://www.gs1.org/voc/?show=linktypes>
+      ; rel="profile"
+      ; anchor="https://id.gs1.org/01/9506000134352?linkType=all",
+<https://example.com/en/packContents/GB>
+      ; rel="https://gs1.org/voc/whatsInTheBox"
+      ; anchor="https://id.gs1.org/01/9506000134352"
     "#,
         ],
     ];
