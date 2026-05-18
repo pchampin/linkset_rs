@@ -1,3 +1,5 @@
+use std::io;
+
 use sophia_bcp47::LanguageTag;
 use sophia_iri::{
     resolve::BaseIri,
@@ -30,6 +32,42 @@ impl Linkset {
         let base = base.map(|b| b.map_unchecked(String::from).into_iri().to_base());
         let entries = parse_all_entries(slice).map_err(|e| LinksetError::Text(e.to_string()))?;
         entries_to_linkset(entries, base.as_ref())
+    }
+
+    /// Write this [`Linkset`] as `application/linkset` to a stream
+    /// as defined by [RFC 9264 §4.1](https://www.rfc-editor.org/rfc/rfc9264.html#name-link-set-document-format-ap).
+    ///
+    /// With `pretty = false` the output is a single line suitable for use as an HTTP
+    /// [`Link`](https://www.rfc-editor.org/rfc/rfc8288#section-3) header value.
+    /// With `pretty = true` each parameter is placed on its own indented line.
+    pub fn to_text_writer(&self, mut writer: impl io::Write, pretty: bool) -> io::Result<()> {
+        let mut first = true;
+        for ctx in self {
+            for link in ctx {
+                if !first {
+                    writer.write_all(if pretty { b",\n" } else { b", " })?;
+                }
+                first = false;
+                write_link_value(&mut writer, link, ctx.anchor(), pretty)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Serialize this [`Linkset`] as `application/linkset` bytes
+    /// as defined by [RFC 9264 §4.1](https://www.rfc-editor.org/rfc/rfc9264.html#name-link-set-document-format-ap).
+    pub fn to_text_vec(&self, pretty: bool) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.to_text_writer(&mut buf, pretty)
+            .expect("writing to Vec<u8> is infallible");
+        buf
+    }
+
+    /// Serialize this [`Linkset`] as an `application/linkset` string
+    /// as defined by [RFC 9264 §4.1](https://www.rfc-editor.org/rfc/rfc9264.html#name-link-set-document-format-ap).
+    pub fn to_text_string(&self, pretty: bool) -> String {
+        // Safe: to_text_writer only emits ASCII bytes.
+        unsafe { String::from_utf8_unchecked(self.to_text_vec(pretty)) }
     }
 }
 
@@ -390,6 +428,100 @@ fn entries_to_linkset(
         .collect::<Result<Linkset, _>>()
 }
 
+// ── Serialization helpers ────────────────────────────────────────────────────
+
+fn write_link_value(
+    w: &mut impl io::Write,
+    link: &Link,
+    anchor: &sophia_iri::uri::Uri<String>,
+    pretty: bool,
+) -> io::Result<()> {
+    let sep: &[u8] = if pretty { b"\n   ; " } else { b"; " };
+
+    write!(w, "<{}>", link.target().as_str())?;
+
+    w.write_all(sep)?;
+    w.write_all(b"rel=")?;
+    write_quoted(w, link.rel().as_str())?;
+
+    w.write_all(sep)?;
+    w.write_all(b"anchor=")?;
+    write_quoted(w, anchor.as_str())?;
+
+    if let Some(t) = &link.type_ {
+        w.write_all(sep)?;
+        w.write_all(b"type=")?;
+        write_quoted(w, t.as_str())?;
+    }
+    for lang in &link.hreflang {
+        w.write_all(sep)?;
+        write!(w, "hreflang={}", lang.as_str())?;
+    }
+    if let Some(title) = &link.title {
+        w.write_all(sep)?;
+        w.write_all(b"title=")?;
+        write_quoted(w, title)?;
+    }
+    if let Some(i18n) = &link.title_i18n {
+        w.write_all(sep)?;
+        w.write_all(b"title*=")?;
+        write_ext_value(w, i18n)?;
+    }
+    if let Some(media) = &link.media {
+        w.write_all(sep)?;
+        w.write_all(b"media=")?;
+        write_quoted(w, media)?;
+    }
+    for (key, values) in link.iter_ext() {
+        for value in values {
+            w.write_all(sep)?;
+            write!(w, "{key}=")?;
+            write_quoted(w, value)?;
+        }
+    }
+    for (key, values) in link.iter_ext_i18n() {
+        for value in values {
+            w.write_all(sep)?;
+            write!(w, "{key}=")?;
+            write_ext_value(w, value)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_quoted(w: &mut impl io::Write, s: &str) -> io::Result<()> {
+    w.write_all(b"\"")?;
+    for b in s.bytes() {
+        match b {
+            b'"' => w.write_all(b"\\\"")?,
+            b'\\' => w.write_all(b"\\\\")?,
+            _ => w.write_all(&[b])?,
+        }
+    }
+    w.write_all(b"\"")
+}
+
+fn write_ext_value(w: &mut impl io::Write, i18n: &I18nString) -> io::Result<()> {
+    write!(w, "UTF-8'{}'", i18n.language.as_str())?;
+    for b in i18n.value.bytes() {
+        if is_attr_char(b) {
+            w.write_all(&[b])?;
+        } else {
+            write!(w, "%{b:02X}")?;
+        }
+    }
+    Ok(())
+}
+
+/// Return true for [RFC 8187 §3.2](https://www.rfc-editor.org/rfc/rfc8187#section-3.2) `attr-char`.
+fn is_attr_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+        )
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -527,5 +659,133 @@ mod tests {
         let base = Some(Uri::new_unchecked("https://example.org/resource1"));
         let [_, text] = crate::tests::spec_example(example);
         Linkset::from_text_str(text, base).unwrap();
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_string(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let s = ls1.to_text_string(false);
+        let ls2 = Linkset::from_text_str(&s, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_string_pretty(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let s = ls1.to_text_string(true);
+        let ls2 = Linkset::from_text_str(&s, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_bytes(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let vec = ls1.to_text_vec(false);
+        let ls2 = Linkset::from_text_slice(&vec, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_bytes_pretty(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let vec = ls1.to_text_vec(true);
+        let ls2 = Linkset::from_text_slice(&vec, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_io(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let mut buf = Vec::new();
+        ls1.to_text_writer(&mut buf, false).unwrap();
+        let ls2 = Linkset::from_text_slice(&buf, base).unwrap();
+        assert_eq!(ls1, ls2);
+    }
+
+    #[test_case("figure 1")]
+    #[test_case("figure 2")]
+    #[test_case("figure 3")]
+    #[test_case("figure 4")]
+    #[test_case("figure 5")]
+    #[test_case("figure 6")]
+    #[test_case("figure 8")]
+    #[test_case("figure 10")]
+    #[test_case("figure 12")]
+    #[test_case("figure 14")]
+    #[test_case("figure 17")]
+    #[test_case("figure 18")]
+    fn round_trip_via_io_pretty(example: &str) {
+        let base = Some(Uri::new_unchecked("https://example.org/resource1"));
+        let [_, text] = crate::tests::spec_example(example);
+        let ls1 = Linkset::from_text_str(text, base).unwrap();
+        let mut buf = Vec::new();
+        ls1.to_text_writer(&mut buf, true).unwrap();
+        let ls2 = Linkset::from_text_slice(&buf, base).unwrap();
+        assert_eq!(ls1, ls2);
     }
 }
