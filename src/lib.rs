@@ -1,6 +1,49 @@
 //! Rust implementation of the Linkset media types [RFC 9264]
 //!
 //! [RFC 9264]: https://www.rfc-editor.org/rfc/rfc9264.html
+//!
+//! # Example: reading and using linkset
+//! ```
+//! # fn test() -> Result<(), Box<dyn std::error::Error>> {
+//! #
+//! use linkset::{Linkset, model::Uri};
+//! let uri = Uri::new_unchecked("https://example.org/page1");
+//!
+//! // this might typically come from an HTTP response's Link header
+//! let link_header = "<https://example.org/page2>; rel=next, <https://example.org/home>; rel=up";
+//!
+//! let linkset = Linkset::from_text_str(link_header, Some(uri))?;
+//! let back = linkset.find(&uri, "prev").next().or_else(|| linkset.find(&uri, "up").next());
+//! assert!(back.is_some());
+//! #
+//! # Ok(()) } test();
+//! ```
+//!
+//! # Example: producing a linkset JSON representation
+//!
+//! ```
+//! # fn test() -> Result<(), Box<dyn std::error::Error>> {
+//! #
+//! use linkset::{Linkset, model::{Link, LinkContext, RelType, Uri}};
+//!
+//! let page1 = Uri::new_unchecked("https://example.org/page1".to_string());
+//! let page2 = Uri::new_unchecked("https://example.org/page2".to_string());
+//! let home = Uri::new_unchecked("https://example.org/page1".to_string());
+//!
+//! let linkset: Linkset = LinkContext::new_with(
+//!   page1,
+//!   vec![
+//!     Link::new(page2, RelType::new_reg_unchecked("next")),
+//!     Link::new(home, RelType::new_reg_unchecked("up")),
+//!   ]
+//! )?.into();
+//!
+//! let json = linkset.to_json_string(true);
+//!
+//! # assert_eq!(linkset, Linkset::from_json_str(&json, None).unwrap());
+//! # Ok(()) } test();
+//! ```
+//!
 
 pub mod error;
 pub mod json;

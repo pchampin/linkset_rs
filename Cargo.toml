@@ -8,7 +8,7 @@ repository = "https://github.com/pchampin/linkset_rs"
 authors = ["Pierre-Antoine Champin <pierre-antoine@champin.net>"]
 
 [lib]
-name = "linkset_rs"
+name = "linkset"
 path = "src/lib.rs"
 
 [dependencies]

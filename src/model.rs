@@ -10,7 +10,7 @@ pub use link::{I18nString, Link};
 pub use link_context::LinkContext;
 pub use media_type::MediaType;
 pub use rel_type::RelType;
-use sophia_iri::uri::Uri;
+pub use sophia_iri::uri::Uri;
 
 use crate::error::LinksetError;
 
@@ -69,6 +69,25 @@ impl Linkset {
                 Ok(self.0.pop())
             }
         }
+    }
+
+    /// Find all matching links
+    pub fn find<T, U>(&self, anchor: &T, rel: &U) -> impl Iterator<Item = &Link>
+    where
+        T: ?Sized,
+        U: ?Sized,
+        Uri<String>: PartialEq<T>,
+        RelType: PartialEq<U>,
+    {
+        self.iter()
+            .filter_map(move |ctx| {
+                if ctx.anchor() == anchor {
+                    Some(ctx.iter().filter(move |lnk| lnk.rel() == rel))
+                } else {
+                    None
+                }
+            })
+            .flatten()
     }
 }
 
