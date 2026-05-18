@@ -15,6 +15,9 @@ pub enum LinksetError {
     /// A JSON document is structurally invalid or contains an invalid value.
     #[error("JSON: {0}")]
     Json(String),
+    /// A text (`application/linkset`) document is syntactically or semantically invalid.
+    #[error("text: {0}")]
+    Text(String),
 }
 
 impl From<serde_json::Error> for LinksetError {
