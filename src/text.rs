@@ -724,8 +724,7 @@ mod tests {
 
     #[test]
     fn hreflang_multi_params() {
-        let input =
-            r#"<https://x.com/foo>; rel="next"; anchor="https://x.com/"; hreflang=en; hreflang=de"#;
+        let input = r#"<https://ex.org/foo>; rel="next"; anchor="https://ex.org/"; hreflang=en; hreflang=de"#;
         let ls = Linkset::from_text_str(input, None).unwrap();
         assert_eq!(ls[0][0].hreflang.len(), 2);
         assert_eq!(ls[0][0].hreflang[0].as_str(), "en");
@@ -735,7 +734,7 @@ mod tests {
     #[test]
     fn ext_i18n_title_star() {
         // title*=UTF-8'de'n%c3%a4chstes%20Kapitel  →  "nächstes Kapitel"
-        let input = r#"<https://x.com/foo>; rel="next"; anchor="https://x.com/"; title*=UTF-8'de'n%c3%a4chstes%20Kapitel"#;
+        let input = r#"<https://ex.org/foo>; rel="next"; anchor="https://ex.org/"; title*=UTF-8'de'n%c3%a4chstes%20Kapitel"#;
         let ls = Linkset::from_text_str(input, None).unwrap();
         let t = ls[0][0].title_i18n.as_ref().unwrap();
         assert_eq!(t.language.as_str(), "de");
@@ -744,14 +743,14 @@ mod tests {
 
     #[test]
     fn ext_attribute_multi_value() {
-        let input = r#"<https://x.com/foo>; rel="item"; anchor="https://x.com/"; bar="barone"; bar="bartwo""#;
+        let input = r#"<https://ex.org/foo>; rel="item"; anchor="https://ex.org/"; bar="barone"; bar="bartwo""#;
         let ls = Linkset::from_text_str(input, None).unwrap();
         assert_eq!(ls[0][0].get_ext("bar").unwrap(), &["barone", "bartwo"]);
     }
 
     #[test]
     fn ext_i18n_attribute() {
-        let input = r#"<https://x.com/foo>; rel="item"; anchor="https://x.com/"; baz*=US-ASCII'en'bazvalue"#;
+        let input = r#"<https://ex.org/foo>; rel="item"; anchor="https://ex.org/"; baz*=US-ASCII'en'bazvalue"#;
         let ls = Linkset::from_text_str(input, None).unwrap();
         let vals = ls[0][0].get_ext_i18n("baz*").unwrap();
         assert_eq!(vals[0].language.as_str(), "en");
@@ -761,13 +760,13 @@ mod tests {
     #[test]
     fn non_ascii() {
         // 'é' (U+00E9) encodes as 0xC3 0xA9 in UTF-8 — not valid in application/linkset
-        let input = r#"<https://x.com/foo>; rel="item"; anchor="https://x.com/"; title="erroné""#;
+        let input = r#"<https://ex.org/foo>; rel="item"; anchor="https://ex.org/"; title="erroné""#;
         assert!(Linkset::from_text_str(input, None).is_err());
     }
 
     #[test]
     fn serialize_with_base() {
-        let base = Some(Uri::new_unchecked("https://x.com/"));
+        let base = Some(Uri::new_unchecked("https://ex.org/"));
         let input = r#"<foo>; rel="item""#;
         let ls = Linkset::from_text_str(input, base).unwrap();
         let output = ls.to_text_string(false, base);
