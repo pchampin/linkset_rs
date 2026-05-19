@@ -48,6 +48,7 @@
 pub mod error;
 pub mod json;
 pub mod model;
+mod relativizer;
 pub mod text;
 
 pub use model::Linkset;

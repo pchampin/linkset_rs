@@ -27,7 +27,7 @@ use crate::{
     Linkset,
     error::LinksetError,
     model::{I18nString, Link, LinkContext, MediaType, RelType, ext_token},
-    text::relativize,
+    relativizer::UriRelativizer,
 };
 
 impl Linkset {
@@ -86,7 +86,11 @@ impl Linkset {
     ///
     /// If `base` is not None, anchors and targets are relativized against it.
     pub fn to_json_value(&self, base: Option<Uri<&str>>) -> Value {
-        let contexts: Vec<Value> = self.iter().map(|c| context_to_value(c, base)).collect();
+        let rel = UriRelativizer::new(base);
+        let contexts: Vec<Value> = self
+            .iter()
+            .map(move |c| context_to_value(c, &rel))
+            .collect();
         let mut map = serde_json::Map::new();
         map.insert("linkset".into(), Value::Array(contexts));
         Value::Object(map)
@@ -380,18 +384,18 @@ fn parse_i18n_value(value: &Value) -> Result<I18nString, &'static str> {
 
 // ---------------- Serialization ----------------
 
-fn context_to_value(ctx: &LinkContext, base: Option<Uri<&str>>) -> Value {
+fn context_to_value(ctx: &LinkContext, rel: &UriRelativizer) -> Value {
     let mut map = serde_json::Map::new();
 
-    let anchor = relativize(ctx.anchor().as_ref(), base);
+    let anchor = rel.relativize(ctx.anchor().as_ref());
     if !anchor.is_empty() {
         map.insert("anchor".into(), anchor.as_str().into());
     }
 
     for link in ctx {
-        let rel = link.rel().as_str().to_string();
-        let target_val = link_to_value(link, base);
-        map.entry(rel)
+        let rel_type = link.rel().as_str().to_string();
+        let target_val = link_to_value(link, rel);
+        map.entry(rel_type)
             .or_insert_with(|| Value::Array(vec![]))
             .as_array_mut()
             .unwrap()
@@ -401,11 +405,11 @@ fn context_to_value(ctx: &LinkContext, base: Option<Uri<&str>>) -> Value {
     Value::Object(map)
 }
 
-fn link_to_value(link: &Link, base: Option<Uri<&str>>) -> Value {
+fn link_to_value(link: &Link, rel: &UriRelativizer) -> Value {
     let mut map = serde_json::Map::new();
     map.insert(
         "href".into(),
-        Value::String(relativize(link.target().as_ref(), base).to_string()),
+        Value::String(rel.relativize(link.target().as_ref()).to_string()),
     );
 
     if let Some(type_) = &link.type_ {

@@ -10,7 +10,7 @@
 //!
 //! [RFC 9264]: https://www.rfc-editor.org/rfc/rfc9264.html
 
-use std::io;
+use std::{borrow::Cow, io};
 
 use sophia_bcp47::LanguageTag;
 use sophia_iri::{
@@ -29,6 +29,7 @@ use crate::{
     Linkset,
     error::LinksetError,
     model::{I18nString, Link, LinkContext, MediaType, RelType, ext_token},
+    relativizer::UriRelativizer,
 };
 
 impl Linkset {
@@ -60,6 +61,7 @@ impl Linkset {
         pretty: bool,
         base: Option<Uri<&str>>,
     ) -> io::Result<()> {
+        let rel = UriRelativizer::new(base);
         let mut first = true;
         for ctx in self {
             for link in ctx {
@@ -67,8 +69,8 @@ impl Linkset {
                     writer.write_all(if pretty { b",\n" } else { b", " })?;
                 }
                 first = false;
-                let anchor = relativize(ctx.anchor().as_ref(), base);
-                write_link_value(&mut writer, link, anchor, pretty, base)?;
+                let anchor = rel.relativize(ctx.anchor().as_ref());
+                write_link_value(&mut writer, link, anchor, pretty, &rel)?;
             }
         }
         Ok(())
@@ -465,13 +467,13 @@ fn entries_to_linkset(
 fn write_link_value(
     w: &mut impl io::Write,
     link: &Link,
-    anchor: UriRef<&str>,
+    anchor: UriRef<Cow<str>>,
     pretty: bool,
-    base: Option<Uri<&str>>,
+    rel: &UriRelativizer,
 ) -> io::Result<()> {
     let sep: &[u8] = if pretty { b"\n   ; " } else { b"; " };
 
-    write!(w, "<{}>", relativize(link.target().as_ref(), base))?;
+    write!(w, "<{}>", rel.relativize(link.target().as_ref()))?;
 
     w.write_all(sep)?;
     w.write_all(b"rel=")?;
@@ -557,50 +559,10 @@ fn is_attr_char(b: u8) -> bool {
         )
 }
 
-pub(crate) fn relativize<'a>(uri: Uri<&'a str>, base: Option<Uri<&str>>) -> UriRef<&'a str> {
-    if let Some(base) = base {
-        let base = match base.find('#') {
-            None => base,
-            Some(f) => Uri::new_unchecked(&base[..f]),
-        };
-        let common_len = uri
-            .bytes()
-            .zip(base.bytes())
-            .take_while(|(b1, b2)| b1 == b2)
-            .count();
-        if common_len > 0 {
-            if common_len == base.len()
-                && (common_len == uri.len()
-                    || uri[common_len..].starts_with('?')
-                    || uri[common_len..].starts_with('#'))
-            {
-                return UriRef::new_unchecked(&uri[common_len..]);
-            }
-            if let Some(f) = uri[..common_len].find('#') {
-                return UriRef::new_unchecked(&uri[f..]);
-            }
-            if let Some(q) = uri[..common_len].find('?') {
-                return UriRef::new_unchecked(&uri[q..]);
-            }
-            if base[common_len..].find('/').is_none()
-                && let Some(p) = base[..common_len].rfind('/')
-            {
-                if uri.len() > p + 1 {
-                    return UriRef::new_unchecked(&uri[p + 1..]);
-                } else {
-                    return UriRef::new_unchecked(".");
-                }
-            }
-        }
-    }
-    UriRef::new_unchecked(uri.unwrap())
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use sophia_iri::{Iri, IriRef};
     use test_case::test_case;
 
     use super::*;
@@ -637,54 +599,6 @@ mod tests {
             Linkset::from_text_str(input, None),
             Err(LinksetError::Text(_))
         ));
-    }
-
-    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=e#f", "#f")]
-    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=e#ff", "#ff")]
-    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=e", "")]
-    #[test_case("x://a/b/c?d=e#f", "x://a/b/c?d=ee", "?d=ee")]
-    #[test_case("x://a/b/c?d=e#f", "x://a/b/c", "c")]
-    #[test_case("x://a/b/c?d=e#f", "x://a/b/cc", "cc")]
-    #[test_case("x://a/b/c?d=e#f", "x://a/b/", ".")]
-    #[test_case("x://a/b/c?d=e#f", "x://a/bb", "x://a/bb")]
-    #[test_case("x://a/b/c?d=e#f", "x:o", "x:o")]
-    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=e#f", "#f")]
-    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=e#ff", "#ff")]
-    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=e", "")]
-    #[test_case("x://a/b/c?d=e", "x://a/b/c?d=ee", "?d=ee")]
-    #[test_case("x://a/b/c?d=e", "x://a/b/c", "c")]
-    #[test_case("x://a/b/c?d=e", "x://a/b/cc", "cc")]
-    #[test_case("x://a/b/c?d=e", "x://a/b/", ".")]
-    #[test_case("x://a/b/c?d=e", "x://a/bb", "x://a/bb")]
-    #[test_case("x://a/b/c?d=e", "x:o", "x:o")]
-    #[test_case("x://a/b/c", "x://a/b/c?d=e#f", "?d=e#f")]
-    #[test_case("x://a/b/c", "x://a/b/c?d=e#ff", "?d=e#ff")]
-    #[test_case("x://a/b/c", "x://a/b/c?d=e", "?d=e")]
-    #[test_case("x://a/b/c", "x://a/b/c?d=ee", "?d=ee")]
-    #[test_case("x://a/b/c", "x://a/b/c", "")]
-    #[test_case("x://a/b/c", "x://a/b/cc", "cc")]
-    #[test_case("x://a/b/c", "x://a/b/", ".")]
-    #[test_case("x://a/b/c", "x://a/bb", "x://a/bb")]
-    #[test_case("x://a/b/c", "x:o", "x:o")]
-    #[test_case("x://a/b/", "x://a/b/c?d=e#f", "c?d=e#f")]
-    #[test_case("x://a/b/", "x://a/b/c?d=e#ff", "c?d=e#ff")]
-    #[test_case("x://a/b/", "x://a/b/c?d=e", "c?d=e")]
-    #[test_case("x://a/b/", "x://a/b/c?d=ee", "c?d=ee")]
-    #[test_case("x://a/b/", "x://a/b/c", "c")]
-    #[test_case("x://a/b/", "x://a/b/cc", "cc")]
-    #[test_case("x://a/b/", "x://a/b/", "")]
-    #[test_case("x://a/b/", "x://a/bb", "x://a/bb")]
-    #[test_case("x://a/b/", "x:o", "x:o")]
-    fn relativize_(base: &str, uri: &str, exp: &str) {
-        let base = Uri::new_unchecked(dbg!(base));
-        let uri = Uri::new_unchecked(dbg!(uri));
-        let got = relativize(uri, Some(base));
-        assert_eq!(exp, got.as_str());
-        let base_iri = Iri::new_unchecked(base.unwrap());
-        let base = base_iri.as_base();
-        let check = base.resolve(IriRef::new_unchecked(got.unwrap()));
-        dbg!("checking resolution");
-        assert_eq!(uri.as_str(), check.as_str());
     }
 
     #[test]
